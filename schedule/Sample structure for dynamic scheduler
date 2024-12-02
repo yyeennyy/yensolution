@@ -1,0 +1,108 @@
+package com.example.demo;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.Trigger;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.scheduling.support.CronTrigger;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+
+@Component
+public class SampleDynamicScheduler {
+    private static final Logger logger = LoggerFactory.getLogger(SampleDynamicScheduler.class);
+    private final Map<String, SampleObject> cache = new ConcurrentHashMap<>();
+    private final Map<String, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
+    private final SampleRepository sampleRepository;
+    private ThreadPoolTaskScheduler scheduler;
+
+    public SampleDynamicScheduler(SampleRepository sampleRepository) {
+        this.sampleRepository = sampleRepository;
+    }
+
+    @PostConstruct
+    public void init() {
+        // 서버에 초기 데이터 저장
+        List<SampleObject> newData = sampleRepository.findAll();
+        newData.forEach(data -> cache.put(data.getName(), data));
+
+        // 스케줄러 활성화
+        scheduler = new ThreadPoolTaskScheduler();
+        scheduler.initialize();
+
+        // 서버 데이터를 가지고 초기 스케줄러 등록
+        cache.forEach((key, data) -> scheduleTask(key, data.getInterval()));
+
+        logger.info("scheduler initialized");
+    }
+
+    @PreDestroy
+    public void destroy() {
+        scheduler.shutdown();
+    }
+
+    @Scheduled(fixedRate = 60000) // 1 min period polling
+    private void pollUpdates() {
+        // DB 데이터 확인
+        List<SampleObject> newData = sampleRepository.findAll();
+
+        // DB랑 서버 데이터 비교해서 변경사항 있다면 스케줄러 등록 시작
+        for(SampleObject data : newData) {
+            if (isUpdated(data)) {
+                applyScheduler(data);
+            }
+        }
+    }
+
+    private void applyScheduler(SampleObject target) {
+        // 서버에 변경된 DB 데이터 업데이트
+        cache.put(target.getName(), target);
+
+        // 해당 스케줄러 삭제 후 재등록
+        removeScheduleTask(target.getName());
+        scheduleTask(target.getName(), target.getInterval());
+    }
+
+    private void removeScheduleTask(String key) {
+        ScheduledFuture<?> future = scheduledTasks.get(key);
+        if (future != null) {
+            future.cancel(true);
+            scheduledTasks.remove(key);
+            logger.info("scheduler removed {}", key);
+        }
+    }
+
+    private void scheduleTask(String key, String interval) {
+        // 스케줄러 주기 결정하기 (예시: 크론식)
+        String cron = convertIntervalToCron(interval);
+
+        // 스케줄러 로직 작성
+        Runnable task = () -> {
+            logger.info("running,, {}", key);
+        };
+
+        // 스케줄러 등록
+        Trigger trigger = new CronTrigger(cron);
+        ScheduledFuture<?> schedule = scheduler.schedule(task, trigger);
+        scheduledTasks.put(key, schedule);
+        logger.info("schedule task added: {}", key);
+    }
+
+    private String convertIntervalToCron(String interval) {
+        // 자체 interval 표현을 cron 표현식으로 변경하는 코드
+        return "* * * * * *";
+    }
+    private boolean isUpdated(SampleObject data) {
+        // 서버 데이터와, DB 데이터 비교하여
+        // 새로 추가/삭제/변경된 건이 있다면 T/F 리턴
+        logger.info("A change has been detected for: {}", data.getName());
+        return true;
+    }
+}
