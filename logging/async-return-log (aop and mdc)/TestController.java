@@ -12,18 +12,18 @@ import java.util.concurrent.Executor;
 public class TestController {
 
     private final Executor taskExecutor;
-    private final CustomThreadFactory threadFactory;
+    private final AsyncService asyncService;
 
-    public TestController(@Qualifier("taskExecutor") Executor taskExecutor, CustomThreadFactory threadFactory) {
+    public TestController(@Qualifier("taskExecutor") Executor taskExecutor, AsyncService asyncService) {
         this.taskExecutor = taskExecutor;
-        this.threadFactory = threadFactory;
+        this.asyncService = asyncService;
     }
 
     @GetMapping("/log-test")
     public String startThread() {
         MDC.put("requestName", String.valueOf(UUID.randomUUID()));
         MDC.put("startTime", String.valueOf(System.nanoTime()));
-        taskExecutor.execute(threadFactory.createThread());
+        taskExecutor.execute(new CustomThread(asyncService));
 
         return "[api] thread started";
     }
